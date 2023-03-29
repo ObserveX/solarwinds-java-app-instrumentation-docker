@@ -1,74 +1,81 @@
 
 
-## Containerising Pet Clinic app using Docker
-
-This is a [dockerized version of the original app](https://github.com/spring-projects/spring-petclinic) published by Spring Boot community. 
-
-
-## Running PetClinic app locally
-
-Petclinic is a [Spring Boot](https://spring.io/guides/gs/spring-boot) application built using Maven. It is an application designed to show how the Spring stack can be used to build simple, but powerful database-oriented applications. The official version of PetClinic demonstrates the use of Spring Boot with Spring MVC and Spring Data JPA.
-
-## How it works?
-
-Spring boot works with MVC (Model-View-Controller) is a pattern in software design commonly used to implement user interfaces, data and control logic. It emphasizes a separation between business logic and its visualization. This "separation of concerns" provides a better division of labor and improved maintenance.We can work with the persistence or data access layer with [spring-data](https://spring.io/projects/spring-data) in a simple and very fast way, without the need to create so many classes manually. Spring data comes with built-in methods below or by default that allow you to save, delete, update and/or create.
+## Instrumenting Pet Clinic app with SolarWinds APM
+Petclinic is a [Spring Boot](https://spring.io/guides/gs/spring-boot) application built using Maven. This is a [instrumented version of the original app](https://github.com/spring-projects/spring-petclinic) published by Spring Boot community. 
 
 
-## Getting Started
-
-
+### Getting Started
 ```
 git clone https://github.com/dockersamples/spring-petclinic.git
 cd spring-petclinic
-./mvnw package
-java -jar target/*.jar
 ```
 
-You can then access petclinic here: http://localhost:8080/
-
-<img width="625" alt="image" src="https://user-images.githubusercontent.com/313480/179161406-54a28200-d52e-411f-bfbe-463cf64b64b3.png">
-
-The applications allows you to perform the following set of functions:
-
-- Add Pets
-- Add Owners
-- Finding Owners
-- Finding Veterinarians
-- Exceptional handling
-
-
-Or you can run it from Maven directly using the Spring Boot Maven plugin. If you do this it will pick up changes that you make in the project immediately (changes to Java source files require a compile as well - most people use an IDE for this):
-
+### Modify the Dockerfile to include SolarWinds APM Instrumentation steps
+In below Dockerfile, we added a RUN command to download the SolarWinds APM agent and an ENTRYPOINT command to include the agent and other options during startup
 ```
-./mvnw spring-boot:run
-```
+FROM eclipse-temurin:17-jdk-jammy as base
+WORKDIR /app
+COPY .mvn/ .mvn
+COPY mvnw pom.xml ./
+RUN ./mvnw dependency:resolve
+COPY src ./src
 
-> NOTE: Windows users should set `git config core.autocrlf true` to avoid format assertions failing the build (use `--global` to set that flag globally).
+# Download SolarWinds APM agent
+RUN curl -sSO https://agent-binaries.cloud.solarwinds.com/apm/java/latest/solarwinds-apm-agent.jar
 
-> NOTE: If you prefer to use Gradle, you can build the app using `./gradlew build` and look for the jar file in `build/libs`.
+FROM base as development
+CMD ["./mvnw", "spring-boot:run", "-Dspring-boot.run.profiles=mysql", "-Dspring-boot.run.jvmArguments=-javaagent:/app/solarwinds-apm-agent.jar -Dsw.apm.service.key=SERVICE KEY HERE -Dsw.apm.collector=apm.collector.cloud.solarwinds.com -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:8000"]
 
-## Building a Container
+FROM base as build
+RUN ./mvnw package
 
-```
- docker build -t petclinic-app . -f Dockerfile
+FROM eclipse-temurin:17-jre-jammy as production
+EXPOSE 8080
+COPY --from=build /app/target/spring-petclinic-*.jar /spring-petclinic.jar
+CMD ["java", "-javaagent:/app/solarwinds-apm-agent.jar", "-Dsw.apm.service.key=SERVICE KEY HERE", "-Dsw.apm.collector=apm.collector.cloud.solarwinds.com", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/spring-petclinic.jar"]
 ```
 
-## Multi-Stage Build
-
-```
- docker build -t petclinic-app . -f Dockerfile.multi
-```
-
-## Using Docker Compose
-
+### Using Docker Compose
 ```
  docker-compose up -d
 ```
+You can then access petclinic here: http://localhost:8080/. Generate load on application and verify APM data in SolarWinds.
 
 
+### Steps for Enabling RUM(FrontEnd monitoring) via manual injection
 
-## References
+1) On SolarWinds —> Add Data —> Website —> Select Real User Monitoring and provide the Name and URL —> Copy the script. 
 
-- [Building PetClinic app using Dockerfile](https://docs.docker.com/language/java/build-images/)
+```bash
+<script src="[https://rum-agent.na-01.cloud.solarwinds.com/ra-e-1570705138407104512.js](https://rum-agent.na-01.cloud.solarwinds.com/ra-e-157070ddddd104512.js)" async></script>
+```
 
+2) Use the **`docker exec`**command to start a shell inside the container:
 
+```bash
+docker exec -it 6828ced931b2 /bin/bash
+```
+
+3) To receive RUM data from your website, add the script immediately before the </body> element on below Konakart web pages.
+
+```bash
+PetClinic web pages are located in src/main/resources/templates/
+src/main/resources/templates/fragments/layout.html
+```
+
+4) exit the container 
+
+```bash
+exit
+```
+
+5) Restart the container to apply the changes:
+
+```bash
+docker restart CONTAINER_ID
+docker restart 6828ced931b2 
+```
+
+Generate load on application and verify RUM data in SolarWinds.
+
+Commit the changes to your source control system. This step is crucial to ensure that the updated webpages with the SolarWinds JavaScript snippet are preserved across different environments and deployments.
