@@ -5,14 +5,16 @@ COPY mvnw pom.xml ./
 RUN ./mvnw dependency:resolve
 COPY src ./src
 
+# Download SolarWinds APM agent
+RUN curl -sSO https://agent-binaries.cloud.solarwinds.com/apm/java/latest/solarwinds-apm-agent.jar
+
 FROM base as development
-CMD ["./mvnw", "spring-boot:run", "-Dspring-boot.run.profiles=mysql", "-Dspring-boot.run.jvmArguments='-agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:8000'"]
+CMD ["./mvnw", "spring-boot:run", "-Dspring-boot.run.profiles=mysql", "-Dspring-boot.run.jvmArguments=-javaagent:/app/solarwinds-apm-agent.jar -Dsw.apm.service.key=SERVICE KEY HERE -Dsw.apm.collector=apm.collector.cloud.solarwinds.com -agentlib:jdwp=transport=dt_socket,server=y,suspend=n,address=*:8000"]
 
 FROM base as build
 RUN ./mvnw package
 
-
 FROM eclipse-temurin:17-jre-jammy as production
 EXPOSE 8080
 COPY --from=build /app/target/spring-petclinic-*.jar /spring-petclinic.jar
-CMD ["java", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/spring-petclinic.jar"]
+CMD ["java", "-javaagent:/app/solarwinds-apm-agent.jar", "-Dsw.apm.service.key=SERVICE KEY HERE", "-Dsw.apm.collector=apm.collector.cloud.solarwinds.com", "-Djava.security.egd=file:/dev/./urandom", "-jar", "/spring-petclinic.jar"]
